@@ -10,6 +10,7 @@ export const ROUTES = {
   surveys: (treeId: string): string => `/trees/${treeId}/surveys`,
   measures: '/measures',
   supports: '/supports',
+  supportChecks: '/supports/checks',
   reviews: '/reviews',
 } as const
 
@@ -34,10 +35,16 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '复壮措施台账' },
   },
   {
+    path: '/supports/checks',
+    name: 'support-checks',
+    component: () => import('@/pages/SupportPatrol.vue'),
+    meta: { title: '加固件现场巡查' },
+  },
+  {
     path: '/supports',
     name: 'support-board',
-    component: () => import('@/pages/SupportBoard.vue'),
-    meta: { title: '支撑加固与避雷件' },
+    component: () => import('@/pages/SupportLedger.vue'),
+    meta: { title: '加固件台账' },
   },
   {
     path: '/reviews',

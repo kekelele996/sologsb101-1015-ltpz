@@ -8,6 +8,7 @@ import type { Tree } from '../types/tree'
 import type { Survey } from '../types/survey'
 import type { Measure } from '../types/measure'
 import type { Support } from '../types/support'
+import type { SupportCheck } from '../types/supportCheck'
 import type { Review } from '../types/review'
 
 const SEED_TIME = '2026-01-08T01:30:00.000Z'
@@ -92,13 +93,49 @@ export async function seedDatabase(): Promise<void> {
     wrap<Measure>({ id: 'measure-c2', treeId: SEED_IDS.treeC, type: '病虫害防治', date: '2026-05-06', material: '生物制剂 2 次施药', operator: '周敏', state: '计划' }),
   ]
 
-  // ---------------- 加固件（含超周期未检查的样本） ----------------
+  // ---------------- 加固件台账（档案室：只管安装日期与检查周期） ----------------
+  // 演示对账：a1 / c1 现场侧已超周期未检；c2 有台账无巡查；c3 安装日期缺失补录失败
   const supports: Support[] = [
-    wrap<Support>({ id: 'support-a1', treeId: SEED_IDS.treeA, type: '支撑杆', installDate: '2019-04-08', checkCycleMon: 24, lastCheckDate: '2024-03-15' }),
-    wrap<Support>({ id: 'support-a2', treeId: SEED_IDS.treeA, type: '避雷', installDate: '2020-07-01', checkCycleMon: 24, lastCheckDate: '2025-06-01' }),
-    wrap<Support>({ id: 'support-b1', treeId: SEED_IDS.treeB, type: '拉纤', installDate: '2021-09-20', checkCycleMon: 36, lastCheckDate: '2024-08-10' }),
-    wrap<Support>({ id: 'support-c1', treeId: SEED_IDS.treeC, type: '避雷', installDate: '2018-06-01', checkCycleMon: 12, lastCheckDate: '2025-05-20' }),
-    wrap<Support>({ id: 'support-c2', treeId: SEED_IDS.treeC, type: '支撑杆', installDate: '2022-05-10', checkCycleMon: 12, lastCheckDate: '2026-05-08' }),
+    wrap<Support>({ id: 'support-a1', treeId: SEED_IDS.treeA, type: '支撑杆', installDate: '2019-04-08', checkCycleMon: 24, backfillIssue: '' }),
+    wrap<Support>({ id: 'support-a2', treeId: SEED_IDS.treeA, type: '避雷', installDate: '2020-07-01', checkCycleMon: 24, backfillIssue: '' }),
+    wrap<Support>({ id: 'support-b1', treeId: SEED_IDS.treeB, type: '拉纤', installDate: '2021-09-20', checkCycleMon: 36, backfillIssue: '' }),
+    wrap<Support>({ id: 'support-c1', treeId: SEED_IDS.treeC, type: '避雷', installDate: '2018-06-01', checkCycleMon: 12, backfillIssue: '' }),
+    wrap<Support>({ id: 'support-c2', treeId: SEED_IDS.treeC, type: '支撑杆', installDate: '2022-05-10', checkCycleMon: 60, backfillIssue: '' }),
+    wrap<Support>({ id: 'support-c3', treeId: SEED_IDS.treeC, type: '拉纤', installDate: '', checkCycleMon: 12, backfillIssue: '安装日期缺失或无法识别，不能按安装日期与周期补出首条巡查记录' }),
+  ]
+
+  // ---------------- 加固件现场巡查记录（巡查班组：每次上树一条） ----------------
+  // 最新一条决定下次检查日期与超期；另含一条「有巡查无台账」（treeB 避雷）差异样本
+  const supportChecks: SupportCheck[] = [
+    wrap<SupportCheck>({
+      id: 'supportcheck-a1-1', treeId: SEED_IDS.treeA, type: '支撑杆', date: '2022-03-10',
+      inspector: '张勇', result: '正常', note: '支撑杆连接件紧固，抱箍无松动，柱身漆面完好。', supportId: 'support-a1', source: '',
+    }),
+    wrap<SupportCheck>({
+      id: 'supportcheck-a1-2', treeId: SEED_IDS.treeA, type: '支撑杆', date: '2024-03-15',
+      inspector: '张勇', result: '需关注', note: '支撑杆底部入土段有轻微锈蚀，建议除锈刷漆，抱箍需复紧。', supportId: 'support-a1', source: '',
+    }),
+    wrap<SupportCheck>({
+      id: 'supportcheck-a2-1', treeId: SEED_IDS.treeA, type: '避雷', date: '2025-06-01',
+      inspector: '李慧', result: '正常', note: '避雷带接地电阻实测 6.8Ω，符合要求，引下线固定牢靠。', supportId: 'support-a2', source: '',
+    }),
+    wrap<SupportCheck>({
+      id: 'supportcheck-b1-1', treeId: SEED_IDS.treeB, type: '拉纤', date: '2024-08-10',
+      inspector: '赵鹏', result: '正常', note: '两组拉纤张力均衡，钢丝绳无断丝，地锚无松动。', supportId: 'support-b1', source: '',
+    }),
+    wrap<SupportCheck>({
+      id: 'supportcheck-c1-1', treeId: SEED_IDS.treeC, type: '避雷', date: '2023-05-12',
+      inspector: '周敏', result: '正常', note: '避雷针竖直无锈蚀，接地连接可靠。', supportId: 'support-c1', source: '',
+    }),
+    wrap<SupportCheck>({
+      id: 'supportcheck-c1-2', treeId: SEED_IDS.treeC, type: '避雷', date: '2025-05-20',
+      inspector: '周敏', result: '异常待处理', note: '引下线固定卡子脱落两处，接地电阻偏高，已上报安排整改。', supportId: 'support-c1', source: '',
+    }),
+    // 有巡查记录但台账查无此件（treeB 无「避雷」台账）
+    wrap<SupportCheck>({
+      id: 'supportcheck-b-orphan-1', treeId: SEED_IDS.treeB, type: '避雷', date: '2026-06-30',
+      inspector: '孙晓', result: '需关注', note: '现场见到一组避雷引下线，但档案室台账未登记该避雷件。', supportId: '', source: '',
+    }),
   ]
 
   // ---------------- 长势复评（衰弱 / 濒危样本均带后续措施） ----------------
@@ -112,11 +149,16 @@ export async function seedDatabase(): Promise<void> {
     wrap<Review>({ id: 'review-c3', treeId: SEED_IDS.treeC, date: '2026-07-20', vigor: '衰弱', trend: '好转', conclusion: '排水改造后积水缓解，新梢萌发量回升。', followUp: '继续按季度监测倾斜度与空洞变化，年度复壮计划中保留透气措施。' }),
   ]
 
-  await db.transaction('rw', db.trees, db.surveys, db.measures, db.supports, db.reviews, async () => {
-    await db.trees.bulkPut(trees)
-    await db.surveys.bulkPut(surveys)
-    await db.measures.bulkPut(measures)
-    await db.supports.bulkPut(supports)
-    await db.reviews.bulkPut(reviews)
-  })
+  await db.transaction(
+    'rw',
+    [db.trees, db.surveys, db.measures, db.supports, db.supportChecks, db.reviews],
+    async () => {
+      await db.trees.bulkPut(trees)
+      await db.surveys.bulkPut(surveys)
+      await db.measures.bulkPut(measures)
+      await db.supports.bulkPut(supports)
+      await db.supportChecks.bulkPut(supportChecks)
+      await db.reviews.bulkPut(reviews)
+    }
+  )
 }

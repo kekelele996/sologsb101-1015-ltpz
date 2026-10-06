@@ -173,6 +173,7 @@ function handleExportCsv(): void {
     treeStore.surveys,
     treeStore.measures,
     treeStore.supports,
+    treeStore.supportChecks,
     treeStore.reviews
   )
   ElMessage.success(`已导出古树养护总览 ${filename}`)

@@ -5,7 +5,7 @@
  */
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Coin, Files, FirstAidKit, Histogram, OfficeBuilding } from '@element-plus/icons-vue'
+import { Coin, Files, FirstAidKit, Histogram, OfficeBuilding, View } from '@element-plus/icons-vue'
 import { useTreeStore } from '@/stores/treeStore'
 import { useMeasureStore } from '@/stores/measureStore'
 import { useReviewStore } from '@/stores/reviewStore'
@@ -29,7 +29,13 @@ const navItems = computed(() => {
       disabled: currentTreeId === null,
     },
     { path: ROUTES.measures, label: '复壮措施', icon: FirstAidKit, badge: String(treeStore.measures.length) },
-    { path: ROUTES.supports, label: '加固件', icon: Coin, badge: String(treeStore.supports.length) },
+    { path: ROUTES.supports, label: '加固件台账', icon: Coin, badge: String(treeStore.supports.length) },
+    {
+      path: ROUTES.supportChecks,
+      label: '现场巡查',
+      icon: View,
+      badge: String(treeStore.supportChecks.length),
+    },
     { path: ROUTES.reviews, label: '长势复评', icon: Histogram, badge: String(treeStore.reviews.length) },
   ]
 })

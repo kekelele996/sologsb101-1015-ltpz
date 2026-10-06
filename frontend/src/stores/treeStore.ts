@@ -10,6 +10,7 @@ import type { ProtectLevel, Tree, TreeDraft } from '../types/tree'
 import type { Survey } from '../types/survey'
 import type { Measure } from '../types/measure'
 import type { Support } from '../types/support'
+import type { SupportCheck } from '../types/supportCheck'
 import type { Review, Trend, Vigor } from '../types/review'
 import { VIGOR_NEED_FOLLOW_UP } from '../types/review'
 import {
@@ -25,10 +26,10 @@ import { nowIso, uuid } from '../utils/id'
 import {
   LEAN_LEVEL_LABEL,
   annualGrowth,
-  isSupportOverdue,
   leanLevel,
   type LeanLevel,
 } from '../utils/dimension'
+import { supportCheckStatus, type SupportCheckStatus } from '../utils/supportCheck'
 
 /** 古树筛选条件（关键字 + 保护级别 + 树种），由 <FilterBar> 同步到 URL query */
 export interface TreeFilters {
@@ -55,13 +56,21 @@ export interface TreeStat {
   doneMeasureCount: number
   pendingMeasureCount: number
   supportCount: number
-  /** 超周期未检查的加固件数 */
+  /** 现场巡查记录条数 */
+  supportCheckCount: number
+  /** 超周期未检查的加固件数（按最新一条现场记录判定；补录失败件不计） */
   overdueCount: number
   reviewCount: number
   latestVigor: Vigor | null
   latestTrend: Trend | null
   /** 是否需要填写后续措施（最新长势为衰弱 / 濒危） */
   needFollowUp: boolean
+}
+
+/** 单件加固件的对账键 + 检查状态，供加固件台账页 / 顶部超期名单 / 总览复用 */
+export interface SupportStatusRow {
+  support: Support
+  status: SupportCheckStatus
 }
 
 const CURRENT_TREE_KEY = 'gbheritagetree:currentTreeId'
@@ -95,6 +104,7 @@ const EMPTY_STAT: Omit<TreeStat, 'treeId'> = {
   doneMeasureCount: 0,
   pendingMeasureCount: 0,
   supportCount: 0,
+  supportCheckCount: 0,
   overdueCount: 0,
   reviewCount: 0,
   latestVigor: null,
@@ -109,6 +119,7 @@ export const useTreeStore = defineStore('tree', () => {
   const surveys = ref<Survey[]>([])
   const measures = ref<Measure[]>([])
   const supports = ref<Support[]>([])
+  const supportChecks = ref<SupportCheck[]>([])
   const reviews = ref<Review[]>([])
   const loading = ref(true)
   const ready = ref(false)
@@ -132,6 +143,7 @@ export const useTreeStore = defineStore('tree', () => {
       const previous = treeSurveys.length > 1 ? treeSurveys[treeSurveys.length - 2] : null
       const treeMeasures = measures.value.filter((row) => row.treeId === tree.id)
       const treeSupports = supports.value.filter((row) => row.treeId === tree.id)
+      const treeSupportChecks = supportChecks.value.filter((row) => row.treeId === tree.id)
       const treeReviews = reviews.value
         .filter((row) => row.treeId === tree.id)
         .sort((a, b) => a.date.localeCompare(b.date))
@@ -156,7 +168,10 @@ export const useTreeStore = defineStore('tree', () => {
         doneMeasureCount: treeMeasures.filter((row) => row.state === '已完成').length,
         pendingMeasureCount: treeMeasures.filter((row) => row.state !== '已完成').length,
         supportCount: treeSupports.length,
-        overdueCount: treeSupports.filter((row) => isSupportOverdue(row.lastCheckDate, row.checkCycleMon)).length,
+        supportCheckCount: treeSupportChecks.length,
+        overdueCount: treeSupports
+          .filter((row) => row.backfillIssue === '')
+          .filter((row) => supportCheckStatus(row, treeSupportChecks).overdue).length,
         reviewCount: treeReviews.length,
         latestVigor: latestReview === null ? null : latestReview.vigor,
         latestTrend: latestReview === null ? null : latestReview.trend,
@@ -185,9 +200,22 @@ export const useTreeStore = defineStore('tree', () => {
     () => trees.value.find((tree) => tree.id === currentTreeId.value) ?? null
   )
 
-  const overdueSupports = computed<Support[]>(() =>
-    supports.value.filter((row) => isSupportOverdue(row.lastCheckDate, row.checkCycleMon))
+  /** 每件台账的检查状态（按最新一条现场记录计算；补录失败件排除） */
+  const supportStatuses = computed<SupportStatusRow[]>(() =>
+    supports.value
+      .filter((row) => row.backfillIssue === '')
+      .map((support) => ({ support, status: supportCheckStatus(support, supportChecks.value) }))
   )
+
+  /** 超期未检查的加固件（顶部超期名单按最新一条现场记录计算） */
+  const overdueSupports = computed<SupportStatusRow[]>(() =>
+    supportStatuses.value.filter((row) => row.status.overdue)
+  )
+
+  /** 取单件加固件的检查状态 */
+  function supportStatusOf(support: Support): SupportCheckStatus {
+    return supportCheckStatus(support, supportChecks.value)
+  }
 
   function statOf(treeId: string): TreeStat {
     return stats.value[treeId] ?? { treeId, ...EMPTY_STAT }
@@ -201,21 +229,23 @@ export const useTreeStore = defineStore('tree', () => {
       if (!subscribed) {
         subscribed = true
         liveQuery(async () => {
-          const [treeRows, surveyRows, measureRows, supportRows, reviewRows] = await Promise.all([
+          const [treeRows, surveyRows, measureRows, supportRows, supportCheckRows, reviewRows] = await Promise.all([
             db.trees.toArray(),
             db.surveys.toArray(),
             db.measures.toArray(),
             db.supports.toArray(),
+            db.supportChecks.toArray(),
             db.reviews.toArray(),
           ])
-          return { treeRows, surveyRows, measureRows, supportRows, reviewRows }
+          return { treeRows, surveyRows, measureRows, supportRows, supportCheckRows, reviewRows }
         }).subscribe({
-          next: ({ treeRows, surveyRows, measureRows, supportRows, reviewRows }) => {
+          next: ({ treeRows, surveyRows, measureRows, supportRows, supportCheckRows, reviewRows }) => {
             const sorted = [...treeRows].sort((a, b) => a.code.localeCompare(b.code, 'zh-Hans-CN'))
             trees.value = sorted
             surveys.value = surveyRows
             measures.value = measureRows
             supports.value = supportRows
+            supportChecks.value = supportCheckRows
             reviews.value = reviewRows
             loading.value = false
             ready.value = true
@@ -304,6 +334,7 @@ export const useTreeStore = defineStore('tree', () => {
     surveys,
     measures,
     supports,
+    supportChecks,
     reviews,
     loading,
     ready,
@@ -315,7 +346,9 @@ export const useTreeStore = defineStore('tree', () => {
     speciesOptions,
     stats,
     visibleTrees,
+    supportStatuses,
     overdueSupports,
+    supportStatusOf,
     statOf,
     loadAll,
     selectTree,
