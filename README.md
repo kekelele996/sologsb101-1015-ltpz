@@ -42,7 +42,7 @@ docker compose up -d --build       # 改完代码后重新构建
 | 构建 | Vite 6 | 开发端口与宿主端口一致（22815） |
 | 路由 | Vue Router 4 | `createWebHistory` + 路由懒加载 |
 | 状态管理 | Pinia 2 | setup store，跨页状态集中在 store，页面只读 store |
-| 本地持久化 | Dexie 4（IndexedDB） | 库名 `gbheritagetree`，含 v1 → v2 升级迁移 |
+| 本地持久化 | Dexie 4（IndexedDB） | 库名 `gbheritagetree`，含 v1 → v2 → v3 升级迁移 |
 | 容器 | node:20-alpine → nginx:alpine | 多阶段构建，`chmod -R a+rX` 规避静态资源 403 |
 
 ---
@@ -69,13 +69,13 @@ sologsb101-1015/
         ├── App.vue             # 外壳：顶部导航 + 当前古树上下文 + 页脚
         ├── env.d.ts
         ├── styles/main.css
-        ├── types/              # tree.ts survey.ts measure.ts support.ts review.ts
+        ├── types/              # tree.ts survey.ts measure.ts support.ts supportCheck.ts review.ts
         ├── stores/             # treeStore.ts measureStore.ts reviewStore.ts
         ├── components/common/  # VigorTag.vue FilterBar.vue StatBadge.vue EmptyPanel.vue
         ├── hooks/              # useTreeHistory.ts useIdbTable.ts
         ├── pages/              # 5 个模块页面
         ├── router/index.ts     # 路由表 + ROUTES 常量
-        └── utils/              # dimension.ts db.ts export.ts seed.ts id.ts
+        └── utils/              # dimension.ts supportCheck.ts db.ts export.ts seed.ts id.ts
 ```
 
 ---
@@ -87,7 +87,7 @@ sologsb101-1015/
 | `/trees` | `pages/TreeList.vue` | 古树一树一档：新建/编辑/级联删除、按保护级别与树种筛选、回显检查次数与最新长势等级 |
 | `/trees/:id/surveys` | `pages/TreeSurvey.vue` | 树体与立地检查：录树高/胸径/冠幅/倾斜/空洞并对比上次、年化生长量、古树历史时间线 |
 | `/measures` | `pages/MeasureBoard.vue` | 复壮措施台账：按类型与实施状态筛选、行内草稿、批量改状态，完成即回写最近复壮日期 |
-| `/supports` | `pages/SupportBoard.vue` | 支撑加固与避雷件登记：超周期未检查自动高亮 + 顶部提醒 + 一键登记本次检查 |
+| `/supports` | `pages/SupportBoard.vue` | 加固件：上方现场巡查记录（检查日期 / 检查人 / 现场结论）、下方档案室台账（安装 / 周期 / 下次检查），两边按古树编号 + 类型对账，超期名单按最新一条巡查算 |
 | `/reviews` | `pages/ReviewView.vue` | 长势复评与结构版本：衰弱/濒危强制填写后续措施、历史时间线、JSON 导入导出 |
 
 `/` 重定向到 `/trees`，未匹配路径统一回落到 `/trees`。
@@ -100,12 +100,13 @@ sologsb101-1015/
 
 * **持久化方案**：IndexedDB，通过 Dexie 封装（`src/utils/db.ts`）。
 * **数据库名**：`gbheritagetree`。
-* **数据结构版本**：`DB_SCHEMA_VERSION = 2`，`version(1)` 建立全部表，`version(2)` 补齐索引并执行 `.upgrade()` 迁移：
-  * `surveys` 增加 `[treeId+date]` 复合索引、`measures` 增加 `operator` 索引、`supports` 增加 `lastCheckDate` 索引、`reviews` 增加 `trend` 索引；
-  * 回填 `revision` / `createdAt` / `updatedAt`；
-  * 为 `trees` 补齐 `lastMeasureDate`（最近复壮日期）回写字段；
-  * 为 `reviews` 补齐 `followUp`（后续措施）字段；
-  * 为 `supports` 补齐 `lastCheckDate` 与 `checkCycleMon` 缺省值。
+* **数据结构版本**：`DB_SCHEMA_VERSION = 3`：
+  * `version(1)` 建立全部表；`version(2)` 补齐索引并回填缺省字段（`[treeId+date]`、`operator`、`lastCheckDate`、`trend` 索引，`lastMeasureDate` / `followUp` 字段等）；
+  * `version(3)` 把「加固件台账」与「现场巡查记录」拆成两本账：
+    * 新增 `supportChecks` 表（`[treeId+type]` 复合索引），`supports` 表去掉 `lastCheckDate` 字段与索引；
+    * **旧数据升级**：按旧「最近检查日期」给每件加固件补出首条现场巡查记录；旧字段为空时按「安装日期 + 检查周期」补；
+      两个日期都不合法、补不出来的不建记录，升级后自动进入对账区「巡查无记录」名单单列；
+    * 旧版（v1 / v2）JSON 存档导入时执行同样的补录逻辑。
 * **表结构**：
 
   | 表 | 主键 | 主要索引 |
@@ -113,18 +114,20 @@ sologsb101-1015/
   | `trees` | id | code, species, protectLevel, ageYears, createdAt, updatedAt, owner |
   | `surveys` | id | treeId, [treeId+date], date, siteNote |
   | `measures` | id | treeId, type, state, date, operator |
-  | `supports` | id | treeId, type, installDate, lastCheckDate |
+  | `supports`（台账：安装 / 周期） | id | treeId, type, installDate |
+  | `supportChecks`（现场巡查：日期 / 检查人 / 结论） | id | supportId, treeId, [treeId+type], date |
   | `reviews` | id | treeId, date, vigor, trend |
 
 * **首屏演示数据**：`initDatabase()` 在打开数据库后检测 `trees` 表是否为空，为空则调用 `utils/seed.ts` 播种，
-  幂等且只执行一次。播种链路为 **古树 → 树体检查 / 复壮措施 / 加固件 / 长势复评** 三层互相引用：
+  幂等且只执行一次。播种链路为 **古树 → 树体检查 / 复壮措施 / 加固件台账 + 现场巡查 / 长势复评** 互相引用：
   * 3 株古树（京-01-0007 国槐 一级 / 京-02-0113 银杏 一级 / 京-05-0246 侧柏 二级）；
   * 9 条树体检查（每株 3 次，树高胸径随日期递增）、8 条复壮措施（覆盖计划 / 实施中 / 已完成）、
-    5 件加固件（其中 **京-01-0007 支撑杆** 与 **京-05-0246 避雷** 故意超周期未检查，用于验证高亮与提醒）、
-    7 条长势复评（含衰弱 / 濒危样本且均已填写后续措施）。
+    5 件加固件台账、6 条现场巡查记录（其中 **京-01-0007 支撑杆** 与 **京-05-0246 避雷** 最新巡查已超周期，
+    另有 1 条「台账无此件」的孤儿巡查，用于验证高亮、提醒与对账单列）、7 条长势复评（含衰弱 / 濒危样本且均已填写后续措施）。
   * 固定 id 如 `tree-guozijian-0007`、`tree-xiangshan-0113`、`tree-ritan-0246` 可直接用于深链验证。
 * **其他本地数据**：`localStorage` 仅保存「最近选中的古树 id」这一界面偏好，不存业务数据。
-* 删除古树会**级联清理**其下的树体检查、复壮措施、加固件与复评记录（同一 Dexie 事务内完成）。
+* 删除古树会**级联清理**其下的树体检查、复壮措施、加固件台账、现场巡查与复评记录（同一 Dexie 事务内完成）；
+  单独删除一件加固件台账时，其历史现场巡查记录**照留**，并在对账区转为「台账无此件」。
 
 ---
 
@@ -151,7 +154,12 @@ npm run preview      # 预览 dist 产物
 * **倾斜安全阈值**：< 5° 正常；5°–10° 需关注；> 10° 超限（`src/utils/dimension.ts`）。
 * **空洞风险**：1–2 处需关注，≥ 3 处判定为高风险，建议立即安排树洞修补与防腐处理。
 * **生长量年化**：由最近两次检查的差值按实际天数折算为「每年」增量，间隔不足 30 天时退回直接差值。
-* **加固件超期**：`最近检查日期 + 检查周期（月）` 早于今天即为超期，列表自动高亮并在顶部汇总提醒；
-  「登记本次检查」会把最近检查日期置为今天并解除高亮。
+* **加固件两本账**：档案室台账（`supports`）只登记安装日期与检查周期；巡查班组每次上树巡检在
+  `supportChecks` 留一条现场记录（检查日期、检查人、现场结论 正常 / 需关注 / 异常）。两边按
+  **古树编号 + 加固件类型** 对账：台账有件却没有任何巡查 →「巡查无记录」；巡查在台账里找不到件 →「台账无此件」；
+  同古树同类型有多件、空挂接巡查无法归属 →「多件待确认」，三类均在页面顶部单列。
+* **加固件超期**：`最新一条现场巡查日期 + 检查周期（月）` 早于今天即为超期（没有巡查记录时回退安装日期）；
+  台账行高亮、顶部超期名单、「只看超期」筛选、古树档案统计与养护总览 CSV 全部按最新一条现场巡查算。
+  巡查记录并入台账时只写巡查这一侧：某条并入失败只提示重试该条，已并进去的记录照留、不回滚。
 * **复评强制校验**：长势为「衰弱」或「濒危」时，后续措施为必填项，未填写无法保存。
 * **措施回写**：复壮措施状态改为「已完成」时，若实施日期晚于古树现有最近复壮日期，则自动回写该日期。

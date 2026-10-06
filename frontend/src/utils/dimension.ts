@@ -101,24 +101,25 @@ export function worseVigor(a: Vigor, b: Vigor): Vigor {
 
 /**
  * 加固件是否超期未检查。
- * 依据 installDate / lastCheckDate 加上 checkCycleMon 个月，与今天比较。
+ * 以「最近一次现场巡查日期」为基准加上 checkCycleMon 个月，与今天比较；
+ * 一条巡查都没有时回退到安装日期（首检也应落在一个周期内）。
  */
-export function isSupportOverdue(lastCheckDate: string, checkCycleMon: number, reference = today()): boolean {
-  const base = lastCheckDate === '' ? '' : lastCheckDate
-  if (base === '') return true
-  const next = addMonths(base, checkCycleMon)
+export function isSupportOverdue(baseDate: string, checkCycleMon: number, reference = today()): boolean {
+  if (baseDate === '') return true
+  const next = addMonths(baseDate, checkCycleMon)
+  if (next === '') return true
   return next < reference
 }
 
-/** 加固件下次检查日期 */
-export function nextCheckDate(lastCheckDate: string, checkCycleMon: number): string {
-  if (lastCheckDate === '') return ''
-  return addMonths(lastCheckDate, checkCycleMon)
+/** 加固件下次检查日期：基准日期（最新巡查日期，无则安装日期）加一个周期 */
+export function nextCheckDate(baseDate: string, checkCycleMon: number): string {
+  if (baseDate === '') return ''
+  return addMonths(baseDate, checkCycleMon)
 }
 
 /** 超期天数 */
-export function overdueDays(lastCheckDate: string, checkCycleMon: number, reference = today()): number {
-  const next = nextCheckDate(lastCheckDate, checkCycleMon)
+export function overdueDays(baseDate: string, checkCycleMon: number, reference = today()): number {
+  const next = nextCheckDate(baseDate, checkCycleMon)
   if (next === '') return 0
   return Math.max(0, daysBetween(next, reference))
 }

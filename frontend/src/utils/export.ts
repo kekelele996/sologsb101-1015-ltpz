@@ -8,9 +8,10 @@ import type { Tree } from '../types/tree'
 import type { Survey } from '../types/survey'
 import type { Measure } from '../types/measure'
 import type { Support } from '../types/support'
+import type { SupportCheck } from '../types/supportCheck'
 import type { Review } from '../types/review'
 import { stampSuffix } from './id'
-import { isSupportOverdue, overdueDays } from './dimension'
+import { buildSupportViews } from './supportCheck'
 
 /** 触发浏览器下载 */
 export function download(filename: string, content: string, mime: string): void {
@@ -66,21 +67,25 @@ export function parseSnapshot(text: string): SnapshotParseResult {
       snapshot: null,
     }
   }
+  // supportChecks 为 v3 新增：旧版（v1 / v2）存档里没有，导入时按安装日期 + 周期补出首条
   const collections: Array<keyof DatabaseSnapshot> = ['trees', 'surveys', 'measures', 'supports', 'reviews']
   for (const key of collections) {
     if (!Array.isArray(data[key])) {
       return { ok: false, message: `存档缺少 ${String(key)} 数组。`, snapshot: null }
     }
   }
-  return { ok: true, message: '存档校验通过。', snapshot: data as DatabaseSnapshot }
+  const snapshot = data as DatabaseSnapshot
+  if (!Array.isArray(snapshot.supportChecks)) snapshot.supportChecks = []
+  return { ok: true, message: '存档校验通过。', snapshot }
 }
 
-/** 生成古树养护总览 CSV（一树一行） */
+/** 生成古树养护总览 CSV（一树一行；超期按最新一条现场巡查算） */
 export function buildTreeCsv(
   trees: Tree[],
   surveys: Survey[],
   measures: Measure[],
   supports: Support[],
+  supportChecks: SupportCheck[],
   reviews: Review[],
 ): string {
   const header = [
@@ -115,7 +120,8 @@ export function buildTreeCsv(
     const treeSupports = supports.filter((row) => row.treeId === tree.id)
     const treeReviews = reviews.filter((row) => row.treeId === tree.id).sort((a, b) => a.date.localeCompare(b.date))
     const latestReview = treeReviews.length > 0 ? treeReviews[treeReviews.length - 1] : null
-    const overdue = treeSupports.filter((row) => isSupportOverdue(row.lastCheckDate, row.checkCycleMon))
+    const treeViews = buildSupportViews(treeSupports, supportChecks)
+    const overdueViews = treeViews.filter((view) => view.overdue)
     lines.push(
       [
         tree.code,
@@ -136,7 +142,9 @@ export function buildTreeCsv(
         treeMeasures.filter((row) => row.state === '已完成').length,
         tree.lastMeasureDate === '' ? '—' : tree.lastMeasureDate,
         treeSupports.length,
-        overdue.length === 0 ? '无' : overdue.map((row) => `${row.type}超期 ${overdueDays(row.lastCheckDate, row.checkCycleMon)} 天`).join('；'),
+        overdueViews.length === 0
+          ? '无'
+          : overdueViews.map((view) => `${view.support.type}超期 ${view.overdueDays} 天`).join('；'),
         treeReviews.length,
         latestReview === null ? '—' : latestReview.vigor,
         latestReview === null ? '—' : latestReview.trend,
@@ -154,10 +162,11 @@ export function exportTreeCsvFile(
   surveys: Survey[],
   measures: Measure[],
   supports: Support[],
+  supportChecks: SupportCheck[],
   reviews: Review[],
 ): string {
   const filename = `古树名木养护总览-${stampSuffix()}.csv`
-  download(filename, buildTreeCsv(trees, surveys, measures, supports, reviews), 'text/csv;charset=utf-8')
+  download(filename, buildTreeCsv(trees, surveys, measures, supports, supportChecks, reviews), 'text/csv;charset=utf-8')
   return filename
 }
 
@@ -179,14 +188,14 @@ export function buildTodoText(
   trees: Tree[],
   measures: Measure[],
   supports: Support[],
+  supportChecks: SupportCheck[],
   reviews: Review[],
 ): string {
   const lines: string[] = [`【古树名木复壮养护待办】共 ${trees.length} 株在档`]
+  const views = buildSupportViews(supports, supportChecks)
   trees.forEach((tree) => {
     const pending = measures.filter((row) => row.treeId === tree.id && row.state !== '已完成').length
-    const overdue = supports.filter(
-      (row) => row.treeId === tree.id && isSupportOverdue(row.lastCheckDate, row.checkCycleMon),
-    ).length
+    const overdue = views.filter((view) => view.support.treeId === tree.id && view.overdue).length
     const treeReviews = reviews.filter((row) => row.treeId === tree.id).sort((a, b) => a.date.localeCompare(b.date))
     const latest = treeReviews.length > 0 ? treeReviews[treeReviews.length - 1] : null
     lines.push(
